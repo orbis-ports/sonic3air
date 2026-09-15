@@ -13,7 +13,8 @@
 #              packages it with that data. check-pkg-no-rom.sh runs inside the pkg step (before make-pkg.sh
 #              on everything that goes in, and after it on the staged package) and fails the build on
 #              anything ROM-like.
-#   release    on sonic3air-ps4-v* tags only: a GitHub Release with the pkg and RELEASE-NOTES.md.
+#   release    on sonic3air-ps4-v<upstream version>-r<revision> tags only (e.g. sonic3air-ps4-v26.08.15.0-r1):
+#              a GitHub Release with the pkg, named after the upstream version it is based on.
 
 name: CI PS4
 
@@ -275,8 +276,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          sparse-checkout: Oxygen/sonic3air/build/_ps4/RELEASE-NOTES.md
-          sparse-checkout-cone-mode: false
+          # Full history and tags: the release names the upstream commit and tag the port is based on.
+          fetch-depth: 0
 
       - name: Download package
         uses: actions/download-artifact@v4
@@ -284,13 +285,44 @@ jobs:
           name: sonic3air-ps4-pkg-${{ needs.host-data.outputs.sha8 }}
           path: out
 
+      # Tags are sonic3air-ps4-v<upstream version>-r<port revision>, e.g. sonic3air-ps4-v26.08.15.0-r1:
+      # the upstream part is the version the game reports (version.inc BUILD_STRING), so a tag cannot
+      # claim a base the code is not built from.
+      - name: Release metadata
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^sonic3air-ps4-v([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)-r([0-9]+)$ ]]; then
+            echo "::error::tag '$TAG' is not sonic3air-ps4-v<upstream version>-r<revision> (e.g. sonic3air-ps4-v26.08.15.0-r1)"
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          revision="${BASH_REMATCH[2]}"
+          build_string=$(sed -n 's/^#define BUILD_STRING *"\(.*\)".*/\1/p' Oxygen/sonic3air/source/sonic3air/version.inc | tr -d '\r')
+          if [[ "$version" != "$build_string" ]]; then
+            echo "::error::tag says upstream $version but version.inc BUILD_STRING is $build_string"
+            exit 1
+          fi
+          base=$(git merge-base HEAD origin/main)
+          base_describe=$(git describe --tags --match 'v[0-9]*' "$base" 2>/dev/null || echo "${base:0:8}")
+          {
+            echo "**Based on upstream Sonic 3 A.I.R. ${version}** - [Eukaryot/sonic3air@${base:0:8}](https://github.com/Eukaryot/sonic3air/commit/${base}) (\`${base_describe}\`), PS4 port revision ${revision}."
+            echo
+            cat Oxygen/sonic3air/build/_ps4/RELEASE-NOTES.md
+          } > "${RUNNER_TEMP}/release-notes.md"
+          echo "name=Sonic 3 A.I.R. ${version} for PS4 (r${revision})" >> "$GITHUB_OUTPUT"
+          echo "notes=${RUNNER_TEMP}/release-notes.md" >> "$GITHUB_OUTPUT"
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ steps.meta.outputs.name }}
           files: |
             out/${{ needs.pkg.outputs.pkg }}
             out/${{ needs.pkg.outputs.pkg }}.sha256
           fail_on_unmatched_files: true
           # The notes are a file in the repository so they are reviewed in the same diff as the change they
           # describe - and so the one thing a fresh install needs (the user's own ROM) cannot be forgotten.
-          body_path: Oxygen/sonic3air/build/_ps4/RELEASE-NOTES.md
+          body_path: ${{ steps.meta.outputs.notes }}
