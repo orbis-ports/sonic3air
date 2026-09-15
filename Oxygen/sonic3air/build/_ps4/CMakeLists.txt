@@ -429,7 +429,7 @@ if (PS4_BUILD_PKG)
 		# Falls back to the generated placeholder when ImageMagick is missing or the conversion fails.
 		set(PS4_ICON_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../___internal/icon/app-no-border.png" CACHE FILEPATH "Source image for sce_sys/icon0.png")
 		set(_icon "${CMAKE_BINARY_DIR}/pkg-assets/icon0.png")
-		find_program(PS4_MAGICK NAMES magick)
+		find_program(PS4_MAGICK NAMES magick convert)	# ImageMagick 7, or 6 (Ubuntu) - same arguments
 		set(_icon_depends)
 		if (PS4_MAGICK AND EXISTS "${PS4_ICON_SOURCE}")
 			set(_icon_depends "${PS4_ICON_SOURCE}")

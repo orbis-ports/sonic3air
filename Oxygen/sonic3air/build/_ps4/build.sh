@@ -5,6 +5,7 @@
 #                                         [--data <dir>] [--sdl-orbis-audio] [--sdl-orbis-joystick]
 #                                         [--sdl-orbis-video] [--sdl-orbis-all] [--no-pkg] [--clean]
 #                                         [--with-remaster [--remaster-bin <audioremaster.bin>]]
+#                                         [--mesa-bundle <dir>]
 #
 # Builds THIS checkout in place; everything the build produces lives under --work
 # (default ~/.cache/sonic3air-ps4), nothing under the repository.
@@ -15,8 +16,8 @@
 #   IV0000-SAIR00001_00-SONIC3AIR0000000.pkg  (+ SAIR00001.pkg symlink) when PkgTool.Core runs
 #
 # --data <dir> packages the release data found there into /app0/data/ (enginedata.bin, gamedata.bin,
-# audiodata.bin, metadata.json, scripts.bin). Those come from a host build:
-# `sonic3air_linux -pack` in Oxygen/sonic3air (see STATUS.md). The ROM is never packaged
+# audiodata.bin, metadata.json, scripts.bin). Those come from a host build, without a ROM:
+# make-host-data.sh (`sonic3air_linux -pack` + `-compilescripts`). The ROM is never packaged
 # (check-pkg-no-rom.sh fails the pkg step on anything ROM-like).
 #
 # The remastered soundtrack (audioremaster.bin, ~126 MB) is NOT packaged by default: the game also loads
@@ -28,6 +29,11 @@
 # file or the icon changes, and a second run with nothing changed does nothing.
 #
 # --sdl-orbis-* switch SDL's platform drivers on (agents B/C, phase F3). Default: SDL dummy drivers.
+#
+# Mesa: a mesa-ps4 checkout with build-orbis/ (found by orbis-env.sh), or a release bundle
+# (orbis-ports/mesa-ps4 orbis-mesa-<sha>.tar.gz: include/ + build-orbis/src/...) given by --mesa-bundle <dir>
+# or by ORBIS_MESA_SRC + ORBIS_MESA_BUILD in the environment (what .github/actions/orbis-toolchain exports).
+# Release data without a ROM: make-host-data.sh --out <dir>, then --data <dir>.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
@@ -42,6 +48,13 @@ BUILD_PKG=ON
 CLEAN=0
 REMASTER=OFF
 REMASTER_BIN=""
+# orbis-env.sh only knows mesa-ps4 checkouts and overwrites ORBIS_MESA_BUILD - keep a bundle given by the environment
+MESA_BUNDLE_SRC=""
+MESA_BUNDLE_BUILD=""
+if [[ -n "${ORBIS_MESA_SRC:-}" && -n "${ORBIS_MESA_BUILD:-}" ]]; then
+  MESA_BUNDLE_SRC="${ORBIS_MESA_SRC}"
+  MESA_BUNDLE_BUILD="${ORBIS_MESA_BUILD}"
+fi
 
 # ⚠ The lines that cannot be shared - see orbis-compat/scripts/ps4/orbis-env.sh. Sibling directory of
 # this repository first, then the personal default.
@@ -66,14 +79,24 @@ while [[ $# -gt 0 ]]; do
     --no-pkg) BUILD_PKG=OFF; shift ;;
     --with-remaster) REMASTER=ON; shift ;;
     --remaster-bin) REMASTER=ON; REMASTER_BIN="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+    --mesa-bundle) MESA_BUNDLE_SRC="$(cd "$2" && pwd)"; MESA_BUNDLE_BUILD="${MESA_BUNDLE_SRC}/build-orbis"; shift 2 ;;
     --clean) CLEAN=1; shift ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 export ORBIS_COMPAT_DIR
 . "${ORBIS_COMPAT_DIR}/scripts/ps4/orbis-env.sh"
+
+if [[ -n "${MESA_BUNDLE_SRC}" ]]; then
+  [[ -f "${MESA_BUNDLE_SRC}/include/EGL/egl.h" ]] || orbis_die "Mesa bundle ${MESA_BUNDLE_SRC} has no include/EGL/egl.h"
+  [[ -f "${MESA_BUNDLE_BUILD}/src/amd/vulkan/libvulkan_radeon.a" ]] || orbis_die "Mesa bundle has no ${MESA_BUNDLE_BUILD}/src/amd/vulkan/libvulkan_radeon.a"
+  export ORBIS_MESA_DIR="${MESA_BUNDLE_SRC}"
+  export ORBIS_MESA_BUILD="${MESA_BUNDLE_BUILD}"
+  export ORBIS_RADV_ARCHIVE="${MESA_BUNDLE_BUILD}/src/amd/vulkan/libvulkan_radeon.a"
+  [[ -f "${MESA_BUNDLE_SRC}/manifest.txt" ]] && orbis_note "Mesa bundle: $(grep -E '^(bundle|mesa-commit)=' "${MESA_BUNDLE_SRC}/manifest.txt" | tr '\n' ' ')"
+fi
 
 [[ -f "${ORBIS_COMPAT_DIR}/build/liborbis-compat.a" ]] || \
   orbis_die "no ${ORBIS_COMPAT_DIR}/build/liborbis-compat.a - build orbis-compat first (orbis-compat/build.sh)"
