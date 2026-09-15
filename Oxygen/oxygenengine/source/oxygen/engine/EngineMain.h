@@ -71,6 +71,9 @@ private:
 
 	AudioOutBase* mAudioOut = nullptr;
 	SDL_Window*	  mSDLWindow = nullptr;
+#if defined(PLATFORM_PS4)
+	SDL_GLContext mSDLGLContext = nullptr;	// Deleted again in "destroyWindow", see there
+#endif
 	Drawer		  mDrawer;
 	std::vector<PackedFileProvider*> mPackedFileProviders;
 };

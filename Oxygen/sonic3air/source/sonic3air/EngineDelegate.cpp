@@ -26,6 +26,7 @@
 
 #include <lemon/program/Program.h>
 #include <lemon/runtime/provider/NativizedOpcodeProvider.h>
+#include "rmxbase/tools/PS4Stage.h"
 
 
 namespace lemon
@@ -182,11 +183,18 @@ void EngineDelegate::onPreSaveStateLoad()
 void EngineDelegate::onApplicationLostFocus()
 {
 	// Automatic pause on focus change can be quite annoying in the desktop version (especially for development), so activate it only on mobile
-#if defined(PLATFORM_ANDROID) || defined(PLATFORM_WEB) || defined(PLATFORM_IOS)
-	if (mGame.shouldPauseOnFocusLoss())
+#if defined(PLATFORM_ANDROID) || defined(PLATFORM_WEB) || defined(PLATFORM_IOS) || defined(PLATFORM_PS4)
+	const bool pauseOnFocusLoss = mGame.shouldPauseOnFocusLoss();
+	if (pauseOnFocusLoss)
 	{
 		Application::instance().enablePauseOnFocusLoss();
 	}
+#endif
+#if defined(PLATFORM_PS4)
+	// PS4: focus is lost when the PS button brings up the system UI - and "Close Application" from there kills the process
+	// without any notification, so this is the last chance to write the settings (persistent game data is saved as it changes)
+	ps4_log("S3AIR_LIFECYCLE: focus lost - auto-pause %s, saving settings", pauseOnFocusLoss ? "on" : "off (not in gameplay)");
+	Configuration::instance().saveSettings();
 #endif
 }
 

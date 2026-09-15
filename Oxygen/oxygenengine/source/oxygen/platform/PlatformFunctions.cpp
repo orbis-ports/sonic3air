@@ -16,7 +16,7 @@
 #ifdef PLATFORM_WINDOWS
 	#include <CleanWindowsInclude.h>
 	#include <shlobj.h>		// For "SHGetKnownFolderPath"
-#elif defined(PLATFORM_LINUX) || defined(PLATFORM_MAC) || defined(PLATFORM_ANDROID) || defined(PLATFORM_SWITCH) || defined(PLATFORM_IOS) || defined(PLATFORM_VITA)
+#elif defined(PLATFORM_LINUX) || defined(PLATFORM_MAC) || defined(PLATFORM_ANDROID) || defined(PLATFORM_SWITCH) || defined(PLATFORM_IOS) || defined(PLATFORM_VITA) || defined(PLATFORM_PS4)
 	#include <stdlib.h>
 	#include <unistd.h>
 	#include <sys/types.h>
@@ -372,6 +372,9 @@ std::wstring PlatformFunctions::getAppDataPath()
 	}
 #elif defined(PLATFORM_MAC) || defined(PLATFORM_IOS)
 	return mExAppDataPath;
+#elif defined(PLATFORM_PS4)
+	// Writable area for homebrew; EngineMain uses "/data/sonic3air/savedata/" directly
+	return L"/data/sonic3air";
 #endif
 	return L"";
 }

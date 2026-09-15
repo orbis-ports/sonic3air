@@ -113,6 +113,17 @@
 	#include <vitaGL.h>
 	#define RMX_USE_GLES2
 
+#elif defined(PLATFORM_PS4)
+	// Desktop GL 4.6 core via Mesa zink -> RADV, context through EGL (platform orbis).
+	// There is no libGL: GLEW resolves every gl* entry point with eglGetProcAddress.
+	#define RMX_USE_GLEW
+	#ifndef GLEW_EGL
+		#define GLEW_EGL
+	#endif
+	#ifndef GLEW_STATIC
+		#define GLEW_STATIC
+	#endif
+
 #else
 	#error Unsupported platform
 #endif

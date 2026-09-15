@@ -15,6 +15,8 @@
 #include "oxygen/helper/Logging.h"
 #include "oxygen/platform/PlatformFunctions.h"
 
+#include "rmxbase/tools/PS4Stage.h"
+
 
 bool ResourcesCache::loadRom()
 {
@@ -71,6 +73,27 @@ bool ResourcesCache::loadRom()
 		}
 	}
 
+#if defined(PLATFORM_PS4)
+	// PS4: the ROM is never part of the package; the user copies it to /data/sonic3air/ (via FTP), or puts it on a USB drive
+	if (!loaded)
+	{
+		static const wchar_t* PS4_ROM_SEARCH_PATHS[] = { L"/data/sonic3air/", L"/mnt/usb0/sonic3air/", L"/mnt/usb0/", L"/mnt/usb1/sonic3air/", L"/mnt/usb1/" };
+		for (const wchar_t* searchPath : PS4_ROM_SEARCH_PATHS)
+		{
+			for (const GameProfile::RomInfo& romInfo : gameProfile.mRomInfos)
+			{
+				romPath = searchPath + romInfo.mSteamRomName;
+				RMX_LOG_INFO("Searching ROM at location: " << WString(romPath).toStdString());
+				loaded = loadRomFile(romPath, romInfo);
+				if (loaded)
+					break;
+			}
+			if (loaded)
+				break;
+		}
+	}
+#endif
+
 #if defined(PLATFORM_WINDOWS) || defined(PLATFORM_LINUX)
 	// If still not loaded, search for Steam installation of the game
 	if (!loaded && !gameProfile.mRomInfos.empty())
@@ -92,8 +115,10 @@ bool ResourcesCache::loadRom()
 	// If ROM was still not loaded, it's time to give up now...
 	if (!loaded)
 	{
+		PS4_STAGE("ROM NOT found (expected Sonic_Knuckles_wSonic3.bin in /data/sonic3air/ or %s)", WString(config.mGameAppDataPath).toStdString().c_str());
 		return false;
 	}
+	PS4_STAGE("ROM found: '%s' (%d bytes)", WString(romPath).toStdString().c_str(), (int)mRom.size());
 
 	if (saveRom)
 	{

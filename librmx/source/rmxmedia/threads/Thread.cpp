@@ -67,7 +67,7 @@ namespace rmx
 	{
 		if (!mIsThreadRunning)
 		{
-		#if !defined(PLATFORM_VITA)
+		#if !defined(PLATFORM_VITA) && !defined(PLATFORM_PS4)	// PS4: don't rely on the platform's default pthread stack size
 			mSDLThread = SDL_CreateThread(ThreadBase::runThreadStatic, mName.c_str(), this);
 		#else
 			mSDLThread = SDL_CreateThreadWithStackSize(ThreadBase::runThreadStatic, mName.c_str(), 4 * 1024 * 1024, this);

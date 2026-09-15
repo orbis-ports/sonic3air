@@ -31,6 +31,9 @@
 #ifdef PLATFORM_VITA
 	#include <psp2/kernel/clib.h>
 #endif
+#ifdef PLATFORM_PS4
+	#include <ps4_app.h>
+#endif
 
 
 namespace
@@ -184,6 +187,13 @@ namespace rmx
 		{
 			mLogger->logMessage(errorSeverity, message);
 		}
+	#if defined(PLATFORM_PS4)
+		else
+		{
+			// Errors before oxygen::Logging::startup() would otherwise go nowhere
+			ps4_log("%s (no logger yet): %s", (errorSeverity == ErrorSeverity::ERROR) ? "ERROR" : "WARNING", message.c_str());
+		}
+	#endif
 	#else
 		sceClibPrintf("[ERROR] %s\n", message.c_str());
 	#endif

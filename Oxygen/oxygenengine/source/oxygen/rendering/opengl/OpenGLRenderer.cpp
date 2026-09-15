@@ -29,6 +29,8 @@
 #include "oxygen/rendering/opengl/shaders/SimpleRectTexturedShader.h"
 #include "oxygen/simulation/LogDisplay.h"
 
+#include "rmxbase/tools/PS4Stage.h"
+
 
 namespace
 {
@@ -338,7 +340,14 @@ void OpenGLRenderer::clearFullscreenBuffers(Framebuffer& buffer1, Framebuffer& b
 
 void OpenGLRenderer::internalRefresh()
 {
+#if defined(PLATFORM_PS4)
+	// Telemetry: all per-frame GPU uploads of the game screen (palette, pattern cache, planes, scroll offsets)
+	const uint64 startUs = PS4FrameTelemetry::nowUs();
 	mRenderResources.refresh();
+	PS4FrameTelemetry::addUpload(PS4FrameTelemetry::nowUs() - startUs);
+#else
+	mRenderResources.refresh();
+#endif
 }
 
 void OpenGLRenderer::renderGeometry(const Geometry& geometry)

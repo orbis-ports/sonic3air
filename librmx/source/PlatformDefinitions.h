@@ -18,10 +18,17 @@
 //  - PLATFORM_WEB		-> Web version (via emscripten)
 //  - PLATFORM_SWITCH	-> Nintendo Switch (homebrew)
 //  - PLATFORM_VITA		-> Playstation Vita (homebrew)
+//  - PLATFORM_PS4		-> PlayStation 4 (homebrew, OpenOrbis toolchain)
 
 
 // Platform specific
-#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
+#if defined(__ORBIS__) || defined(__PS4__)
+	// Checked first: the OpenOrbis toolchain compiles for x86_64-pc-freebsd12, so __unix__ and
+	// __FreeBSD__ are defined as well, and none of the checks below may claim this target
+	#define PLATFORM_PS4
+	#define USE_UTF8_PATHS
+
+#elif defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
 	#define PLATFORM_WINDOWS
 	#if defined(__GNUC__)
 		#define USE_UTF8_PATHS

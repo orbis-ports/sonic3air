@@ -20,6 +20,8 @@
 #include "oxygen/simulation/GameRecorder.h"
 #include "oxygen/simulation/SaveStateSerializer.h"
 
+#include "rmxbase/tools/PS4Stage.h"
+
 #include <lemon/program/function/Function.h>
 #include <lemon/runtime/Runtime.h>
 #include <lemon/runtime/RuntimeFunction.h>
@@ -355,6 +357,7 @@ bool CodeExec::reloadScripts(bool enforceFullReload, bool retainRuntimeState)
 	const std::wstring mainScriptPath = config.mScriptsDir + GameProfile::instance().mMainScriptName;
 
 	const LemonScriptProgram::LoadScriptsResult result = mLemonScriptProgram.loadScripts(mainScriptPath, options);
+	PS4_STAGE("scripts %s (result %d, main script '%s')", (result == LemonScriptProgram::LoadScriptsResult::FAILED) ? "load FAILED" : "loaded", (int)result, WString(mainScriptPath).toStdString().c_str());
 	if (result == LemonScriptProgram::LoadScriptsResult::PROGRAM_CHANGED)
 	{
 		lemon::Runtime::setActiveEnvironment(&mRuntimeEnvironment);

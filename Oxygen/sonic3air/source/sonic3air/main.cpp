@@ -19,6 +19,17 @@
 	#include <SDL3/SDL_main.h>
 #endif
 
+#if defined(PLATFORM_PS4)
+	#include <ps4_app.h>			// orbis-compat optional/: UDP netlog + klog, termination policy
+	#include <orbis_paths.h>		// orbis_set_anchor_root
+	#include <orbis/SystemService.h>
+	#include "rmxbase/tools/PS4Stage.h"
+	#include <cstdio>
+	#include <cstdlib>
+	#include <cstring>
+	extern "C" void orbis_install_crash_handlers(void);		// Oxygen/sonic3air/build/_ps4/orbis/orbis_crash_handlers.cpp
+#endif
+
 
 // [Added for Switch platform] HJW: I know it's sloppy to put this here... it'll get moved afterwards
 // Building with my env (msys2,gcc) requires this stub for some reason
@@ -49,15 +60,116 @@ extern "C"
 #endif
 
 
+#if defined(PLATFORM_PS4)
+namespace
+{
+	// Never return from main() on PS4: that tears the process down outside the system's expected path and
+	// shows error CE-34878-0. sceSystemServiceLoadExec("exit") hands the process back to the system
+	// (measured on hardware in the RetroArch port: it does not return). If it ever does, idle instead.
+	[[noreturn]] void ps4Exit(const char* reason)
+	{
+		PS4_STAGE("exit: %s", reason);
+		const int32_t rc = sceSystemServiceLoadExec("exit", nullptr);
+		ps4_log("sceSystemServiceLoadExec(\"exit\") returned 0x%08x - idling instead", (unsigned)rc);
+		ps4_idle_forever(reason);	// Returns only with "autoexit=1" in /app0/ps4-run.cfg (emulator runs)
+		_Exit(0);
+	}
+
+	// Environment knobs for Mesa and this port, before anything touches the GPU stack.
+	//  -> Mesa's log goes to stderr, which on this console is the kernel debug channel (klog): 8-15 ms per line,
+	//     blocking the calling thread. Its default level is "info", and during gameplay zink's busy-buffer polls produced
+	//     ~150 "syncobj wait timed out" warnings per second (plus periodic info lines from the WSI and the submit path).
+	//     So the default here is "error". Mesa reads MESA_LOG_LEVEL once, at its first log call (video init).
+	//  -> "/data/sonic3air-env.txt" (optional): KEY=VALUE per line, '#' comments, applied with overwrite. This is how
+	//     diagnostics or strategies are toggled on the console without a rebuild (see sonic3air-env.example.txt).
+	void ps4ApplyEnvironment()
+	{
+		static const char* ENV_FILE = "/data/sonic3air-env.txt";
+		setenv("MESA_LOG_LEVEL", "error", 0);
+
+		FILE* file = fopen(ENV_FILE, "r");
+		if (nullptr == file)
+		{
+			ps4_log("env: no %s - defaults only", ENV_FILE);
+		}
+		else
+		{
+			char line[512];
+			int applied = 0;
+			while (nullptr != fgets(line, sizeof(line), file))
+			{
+				char* newline = strpbrk(line, "\r\n");
+				if (nullptr != newline)
+					*newline = 0;
+
+				char* key = line;
+				while (*key == ' ' || *key == '\t')
+					++key;
+				if (*key == 0 || *key == '#')
+					continue;
+
+				char* equals = strchr(key, '=');
+				if (nullptr == equals)
+				{
+					ps4_log("env: ignoring '%s' - no '='", key);
+					continue;
+				}
+
+				// Trim both sides of the '=' and the end of the value
+				char* keyEnd = equals;
+				while (keyEnd > key && (keyEnd[-1] == ' ' || keyEnd[-1] == '\t'))
+					--keyEnd;
+				*keyEnd = 0;
+				char* value = equals + 1;
+				while (*value == ' ' || *value == '\t')
+					++value;
+				char* valueEnd = value + strlen(value);
+				while (valueEnd > value && (valueEnd[-1] == ' ' || valueEnd[-1] == '\t'))
+					--valueEnd;
+				*valueEnd = 0;
+				if (*key == 0)
+					continue;
+
+				setenv(key, value, 1);
+				ps4_log("env: %s=%s (from %s)", key, value, ENV_FILE);
+				++applied;
+			}
+			fclose(file);
+			ps4_log("env: %d knob(s) applied from %s", applied, ENV_FILE);
+		}
+
+		const char* level = getenv("MESA_LOG_LEVEL");
+		ps4_log("env: effective MESA_LOG_LEVEL=%s", (nullptr != level) ? level : "(unset)");
+	}
+}
+#endif
+
+
 int main(int argc, char** argv)
 {
+#if defined(PLATFORM_PS4)
+	// Before anything else: the log channel (klog "alive" line + UDP netlog to the dev host)
+	ps4_app_init("sonic3air", PS4_APP_STAMP);
+	PS4_STAGE("app init (argc=%d)", argc);
+
+	// Before SDL/EGL/Mesa initialization
+	ps4ApplyEnvironment();
+
+	// No working directory on this platform: relative paths ("data/gamedata.bin", "config.json", ...)
+	// are read from the read-only package root. Must happen before the first relative path is opened.
+	orbis_set_anchor_root("/app0/");
+
+	// SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGABRT + std::terminate reports, through the sinks ps4_app_init registered
+	orbis_install_crash_handlers();
+#endif
+
 	EngineMain::earlySetup();
 	PlatformSpecifics::platformStartup();
 	CommandForwarder::setApplicationName("S3AIR");
 
 	GameArgumentsReader arguments;
 
-#if defined(PLATFORM_VITA)
+#if defined(PLATFORM_VITA) || defined(PLATFORM_PS4)
 	argc = 0;
 #else
 	// Read command line arguments
@@ -88,7 +200,7 @@ int main(int argc, char** argv)
 		FTX::FileSystem->removeFile(L"data/audioremaster.bin");
 #endif
 
-#if !defined(PLATFORM_ANDROID) && !defined(PLATFORM_VITA)
+#if !defined(PLATFORM_ANDROID) && !defined(PLATFORM_VITA) && !defined(PLATFORM_PS4)
 	if (arguments.mPack)
 	{
 		PackageBuilder::performPacking();
@@ -125,8 +237,14 @@ int main(int argc, char** argv)
 	}
 	catch (const std::exception& e)
 	{
+	#if defined(PLATFORM_PS4)
+		PS4_STAGE("unhandled exception in main loop: %s", e.what());
+	#endif
 		RMX_ERROR("Caught unhandled exception in main loop: " << e.what(), );
 	}
 
+#if defined(PLATFORM_PS4)
+	ps4Exit("engine finished");
+#endif
 	return 0;
 }

@@ -43,6 +43,8 @@
 	#include "oxygen/menu/devmode/DevModeMainWindow.h"
 #endif
 
+#include "rmxbase/tools/PS4Stage.h"
+
 
 static const float MOUSE_HIDE_TIME = 1.0f;	// Seconds until mouse cursor gets hidden after last movement
 
@@ -642,6 +644,9 @@ void Application::update(float timeElapsed)
 
 void Application::render()
 {
+#if defined(PLATFORM_PS4)
+	const uint64 ps4RenderStartUs = PS4FrameTelemetry::nowUs();
+#endif
 	Profiling::pushRegion(ProfilingRegion::RENDERING);
 
 	if (mIsVeryFirstFrameForLogging)
@@ -737,17 +742,41 @@ void Application::render()
 			else
 			{
 				mNextRefreshTime += tickLengthMilliseconds;
+			#if defined(PLATFORM_PS4)
+				const uint64 sleepStartUs = PS4FrameTelemetry::nowUs();
 				PlatformFunctions::preciseDelay(delay);
+				PS4FrameTelemetry::addSleep(PS4FrameTelemetry::nowUs() - sleepStartUs);
+			#else
+				PlatformFunctions::preciseDelay(delay);
+			#endif
 			}
 		}
 		else
 		{
 			// Rely on V-Sync, but still use a minimum delay in case it's off
 			double delay = tickLengthMilliseconds - Profiling::getRootRegion().mTimer.getAccumulatedSeconds() * 1000.0;
+		#if defined(PLATFORM_PS4)
+			// V-Sync is guaranteed on PS4 (swap interval pinned to 1, the Mesa WSI throttles on the flip queue),
+			// so this 1 ms safety sleep can be switched off via "S3AIR_VSYNC_DELAY=0" in /data/sonic3air-env.txt
+			static const bool ps4UseDelay = []()
+			{
+				const char* value = getenv("S3AIR_VSYNC_DELAY");
+				const bool result = (nullptr == value || value[0] != '0');
+				ps4_log("S3AIR_VSYNC_DELAY: %s (SDL_Delay(1) before the swap %s)", (nullptr == value) ? "default" : value, result ? "on" : "off");
+				return result;
+			}();
+			if (delay >= 1.0 && ps4UseDelay)
+			{
+				const uint64 sleepStartUs = PS4FrameTelemetry::nowUs();
+				SDL_Delay(1);
+				PS4FrameTelemetry::addSleep(PS4FrameTelemetry::nowUs() - sleepStartUs);
+			}
+		#else
 			if (delay >= 1.0)
 			{
 				SDL_Delay(1);	// No precise timing should be needed here
 			}
+		#endif
 		}
 
 		if (mIsVeryFirstFrameForLogging)
@@ -755,7 +784,15 @@ void Application::render()
 			RMX_LOG_INFO("First present screen call");
 		}
 
+	#if defined(PLATFORM_PS4)
+		PS4FrameTelemetry::mFrameSyncMode = usingFramecap ? 1 : 0;
+		const uint64 ps4SwapStartUs = PS4FrameTelemetry::nowUs();
+		PS4FrameTelemetry::addRender(ps4SwapStartUs - ps4RenderStartUs);
 		drawer.presentScreen();
+		PS4FrameTelemetry::framePresented(ps4SwapStartUs, PS4FrameTelemetry::nowUs());
+	#else
+		drawer.presentScreen();
+	#endif
 
 	#if 0
 		// Use a glFinish or glFlush here...?
@@ -1073,6 +1110,7 @@ bool Application::updateLoading()
 				if (!mSimulation->startup())
 				{
 					RMX_LOG_INFO("Simulation startup failed");
+					PS4_STAGE("simulation startup FAILED (scripts?) - quitting");
 
 					// TODO: Handle this better
 					FTX::System->quit();
@@ -1092,6 +1130,7 @@ bool Application::updateLoading()
 				RMX_LOG_INFO("Adding game app instance");
 				mGameApp = &EngineMain::getDelegate().createGameApp();
 				addChild(*mGameApp);
+				PS4_STAGE("simulation started, game app running");
 
 				checkActiveModsUsedFeatures();
 				break;
@@ -1099,6 +1138,7 @@ bool Application::updateLoading()
 
 			case GameLoader::UpdateResult::FAILURE:
 			{
+				PS4_STAGE("game loading FAILED (ROM?) - quitting");
 				// TODO: Handle this better
 				FTX::System->quit();
 				return false;

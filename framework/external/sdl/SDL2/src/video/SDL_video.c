@@ -114,6 +114,9 @@ static VideoBootStrap *bootstrap[] = {
 #ifdef SDL_VIDEO_DRIVER_VITA
     &VITA_bootstrap,
 #endif
+#ifdef SDL_VIDEO_DRIVER_ORBIS
+    &ORBIS_bootstrap,
+#endif
 #ifdef SDL_VIDEO_DRIVER_N3DS
     &N3DS_bootstrap,
 #endif

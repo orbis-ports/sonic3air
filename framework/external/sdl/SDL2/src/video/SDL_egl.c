@@ -116,7 +116,9 @@
 #define EGL_PLATFORM_DEVICE_EXT 0x0
 #endif
 
-#if defined(SDL_VIDEO_STATIC_ANGLE) || defined(SDL_VIDEO_DRIVER_VITA)
+/* SDL_VIDEO_DRIVER_ORBIS: Mesa (EGL platform "orbis", zink over RADV) is linked statically - there is
+ * no dynamic loader for it on the PS4, so every EGL entry point binds to its symbol directly. */
+#if defined(SDL_VIDEO_STATIC_ANGLE) || defined(SDL_VIDEO_DRIVER_VITA) || defined(SDL_VIDEO_DRIVER_ORBIS)
 #define LOAD_FUNC(NAME) \
     _this->egl_data->NAME = (void *)NAME;
 #else
@@ -249,6 +251,15 @@ void *SDL_EGL_GetProcAddress(_THIS, const char *proc)
         const Uint32 eglver = (((Uint32)_this->egl_data->egl_version_major) << 16) | ((Uint32)_this->egl_data->egl_version_minor);
         const SDL_bool is_egl_15_or_later = eglver >= ((((Uint32)1) << 16) | 5);
 
+#ifdef SDL_VIDEO_DRIVER_ORBIS
+        /* Static Mesa: eglGetProcAddress resolves every egl* name from its own table and every gl* name
+         * (desktop-only GL included, e.g. glGetTexImage) through the shared glapi stub table, whatever
+         * EGL version was parsed. There is no library handle to fall back to. */
+        (void)is_egl_15_or_later;
+        if (_this->egl_data->eglGetProcAddress) {
+            retval = _this->egl_data->eglGetProcAddress(proc);
+        }
+#else
         /* EGL 1.5 can use eglGetProcAddress() for any symbol. 1.4 and earlier can't use it for core entry points. */
         if (!retval && is_egl_15_or_later && _this->egl_data->eglGetProcAddress) {
             retval = _this->egl_data->eglGetProcAddress(proc);
@@ -265,6 +276,7 @@ void *SDL_EGL_GetProcAddress(_THIS, const char *proc)
         if (!retval && !is_egl_15_or_later && _this->egl_data->eglGetProcAddress) {
             retval = _this->egl_data->eglGetProcAddress(proc);
         }
+#endif /* SDL_VIDEO_DRIVER_ORBIS */
     }
     return retval;
 }
@@ -333,7 +345,7 @@ static int SDL_EGL_LoadLibraryInternal(_THIS, const char *egl_path)
     }
 #endif
 
-#if !defined(SDL_VIDEO_STATIC_ANGLE) && !defined(SDL_VIDEO_DRIVER_VITA)
+#if !defined(SDL_VIDEO_STATIC_ANGLE) && !defined(SDL_VIDEO_DRIVER_VITA) && !defined(SDL_VIDEO_DRIVER_ORBIS)
     /* A funny thing, loading EGL.so first does not work on the Raspberry, so we load libGL* first */
     path = SDL_getenv("SDL_VIDEO_GL_DRIVER");
     if (path) {

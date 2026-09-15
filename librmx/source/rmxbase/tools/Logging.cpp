@@ -15,6 +15,8 @@
 	#include <android/log.h>
 #elif defined(PLATFORM_VITA)
 	#include <psp2/kernel/clib.h>
+#elif defined(PLATFORM_PS4)
+	#include <ps4_app.h>	// orbis-compat optional/ps4_app.cpp: UDP netlog, klog fallback
 #endif
 
 #include <chrono>
@@ -60,7 +62,7 @@ namespace rmx
 
 	void StdCoutLogger::log(LogLevel logLevel, const std::string& string)
 	{
-	#if !defined(PLATFORM_VITA)
+	#if !defined(PLATFORM_VITA) && !defined(PLATFORM_PS4)	// PS4: stdout is the kernel debug channel, which blocks the calling thread for 8-15 ms per line
 	#if defined(PLATFORM_WINDOWS)
 		// Use different color in console output on Windows
 		const HANDLE handle = ::GetStdHandle(STD_OUTPUT_HANDLE);
@@ -99,6 +101,12 @@ namespace rmx
 	#elif defined(PLATFORM_VITA)
 		{
 			sceClibPrintf("[rmx] %s\n", string.c_str());
+		}
+	#elif defined(PLATFORM_PS4)
+		{
+			// UDP only (klog only if netlog is down), so this is safe in the main loop as well
+			const char* level = (logLevel == LogLevel::ERROR) ? "ERROR " : (logLevel == LogLevel::WARNING) ? "WARN " : "";
+			ps4_log_frame("%s%s", level, string.c_str());
 		}
 	#endif
 	}

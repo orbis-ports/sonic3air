@@ -25,7 +25,7 @@
 	#include <dirent.h>
 	#include <sys/stat.h>
 
-#elif defined(PLATFORM_ANDROID) || defined(PLATFORM_SWITCH) || defined(PLATFORM_IOS) || defined(PLATFORM_VITA)
+#elif defined(PLATFORM_ANDROID) || defined(PLATFORM_SWITCH) || defined(PLATFORM_IOS) || defined(PLATFORM_VITA) || defined(PLATFORM_PS4)
 	// This requires Android NDK 22
 	#include <filesystem>
 	namespace std_filesystem = std::filesystem;
@@ -145,7 +145,13 @@ namespace rmx
 
 		#elif defined(USE_UTF8_PATHS)
 
+		#if defined(PLATFORM_PS4)
+			// There is no working directory on PS4 (getcwd = ENOSYS). orbis-compat anchors relative paths for
+			// open/stat/unlink/rename, but not for opendir, so do it here: relative means relative to /app0/
+			const std::string basePathUTF8 = (basePath.empty() || basePath[0] != L'/') ? ("/app0/" + std::string(*WString(basePath).toUTF8())) : std::string(*WString(basePath).toUTF8());
+		#else
 			const std::string basePathUTF8 = *WString(basePath).toUTF8();
+		#endif
 			DIR* dp = opendir(basePathUTF8.c_str());
 			if (nullptr == dp)
 				return;
@@ -252,7 +258,14 @@ namespace rmx
 	{
 	#ifdef USE_STD_FILESYSTEM
 		const std_filesystem::path fspath(path.data());
+	#if defined(PLATFORM_PS4)
+		// Non-throwing overload: the console's stat can fail with errors other than ENOENT (e.g. EINVAL
+		// for relative paths before anchoring, EACCES outside the sandbox), which would throw here
+		std::error_code errorCode;
+		return std_filesystem::exists(fspath, errorCode);
+	#else
 		return std_filesystem::exists(fspath);
+	#endif
 	#else
 		RMX_ASSERT(false, "Not implemented: FileIO::exists");
 		return false;
@@ -263,7 +276,14 @@ namespace rmx
 	{
 	#ifdef USE_STD_FILESYSTEM
 		const std_filesystem::path fspath(path.data());
+	#if defined(PLATFORM_PS4)
+		// Non-throwing overload: the console's stat can fail with errors other than ENOENT (e.g. EINVAL
+		// for relative paths before anchoring, EACCES outside the sandbox), which would throw here
+		std::error_code errorCode;
+		return std_filesystem::is_regular_file(fspath, errorCode);
+	#else
 		return std_filesystem::is_regular_file(fspath);
+	#endif
 	#else
 		RMX_ASSERT(false, "Not implemented: FileIO::isFile");
 		return false;
@@ -274,7 +294,14 @@ namespace rmx
 	{
 	#ifdef USE_STD_FILESYSTEM
 		const std_filesystem::path fspath(path.data());
+	#if defined(PLATFORM_PS4)
+		// Non-throwing overload: the console's stat can fail with errors other than ENOENT (e.g. EINVAL
+		// for relative paths before anchoring, EACCES outside the sandbox), which would throw here
+		std::error_code errorCode;
+		return std_filesystem::is_directory(fspath, errorCode);
+	#else
 		return std_filesystem::is_directory(fspath);
+	#endif
 	#else
 		RMX_ASSERT(false, "Not implemented: FileIO::isDirectory");
 		return false;
@@ -669,7 +696,11 @@ namespace rmx
 
 	std::wstring FileIO::getCurrentDirectory()
 	{
-	#ifdef USE_STD_FILESYSTEM
+	#if defined(PLATFORM_PS4)
+		// No working directory concept on PS4 (getcwd = ENOSYS, std::filesystem::current_path would throw);
+		// relative paths are anchored to the read-only package root /app0/ by orbis-compat
+		return L"/app0/";
+	#elif defined(USE_STD_FILESYSTEM)
 		return std_filesystem::current_path().wstring();
 	#else
 		return L"";
@@ -678,7 +709,9 @@ namespace rmx
 
 	void FileIO::setCurrentDirectory(std::wstring_view path)
 	{
-	#ifdef USE_STD_FILESYSTEM
+	#if defined(PLATFORM_PS4)
+		// Not supported (chdir is refused), see getCurrentDirectory
+	#elif defined(USE_STD_FILESYSTEM)
 		const std_filesystem::path fspath(path.data());
 		std_filesystem::current_path(fspath);
 	#endif

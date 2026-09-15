@@ -7,6 +7,7 @@
 */
 
 #include "rmxmedia.h"
+#include "rmxbase/tools/PS4Stage.h"
 
 #if defined(PLATFORM_WEB)
 	#include <emscripten.h>
@@ -226,6 +227,18 @@ namespace rmx
 		render();
 
 		mRoot.endFrame();
+
+#if defined(PLATFORM_PS4)
+		// Boot / liveness markers for the console log (UDP netlog, see rmxbase/tools/PS4Stage.h)
+		{
+			static uint32 ps4FrameCount = 0;
+			++ps4FrameCount;
+			if (ps4FrameCount == 1)
+				PS4_STAGE("first frame done");
+			else if (ps4FrameCount == 60 || (ps4FrameCount % 3600) == 0)
+				PS4_STAGE("frame %u, %.1f fps", ps4FrameCount, mFrameRate);
+		}
+#endif
 
 #ifdef PLATFORM_WEB
 		if (!mRunning)

@@ -125,6 +125,14 @@ tryagain:
     case EINTR:
         goto tryagain;
         /* break; -Wunreachable-code-break */
+#if defined(__ORBIS__) && (ETIMEDOUT != 60)
+    /* PS4: the kernel underneath is FreeBSD and pthread_cond_timedwait returns 60.
+       The SDK's C <bits/errno.h> already says 60 (only the prebuilt libc++.a was
+       built against Linux's 110), so this arm only exists if some other errno.h
+       wins the include order - in which case a timeout must still be a timeout
+       and not an SDL_SetError on every expired wait. */
+    case 60:
+#endif
     case ETIMEDOUT:
         retval = SDL_MUTEX_TIMEDOUT;
         break;

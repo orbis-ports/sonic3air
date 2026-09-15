@@ -109,6 +109,30 @@ void OpenGLRenderResources::refresh()
 		Range pendingChanges;
 		Range currentChanges;
 
+	#if defined(PLATFORM_PS4)
+		// Round-robin buffer textures take one combined range per frame, see BufferTexture::updateRange
+		const bool collectRange = (BufferTexture::getUploadStrategy() == BufferTexture::UploadStrategy::ROUND_ROBIN);
+		Range collectedChanges;
+		auto uploadChanges = [&](const Range& range)
+		{
+			if (!collectRange)
+			{
+				writeToBufferIfNeeded(range.mFirst, range.mLast, bitmap);
+			}
+			else if (!collectedChanges.valid())
+			{
+				collectedChanges = range;
+			}
+			else
+			{
+				collectedChanges.mFirst = std::min(collectedChanges.mFirst, range.mFirst);
+				collectedChanges.mLast = std::max(collectedChanges.mLast, range.mLast);
+			}
+		};
+	#else
+		auto uploadChanges = [&](const Range& range) { writeToBufferIfNeeded(range.mFirst, range.mLast, bitmap); };
+	#endif
+
 		for (int patternIndex = 0; patternIndex < 0x800; ++patternIndex)
 		{
 			if (!mAllPatternsDirty)
@@ -154,7 +178,7 @@ void OpenGLRenderResources::refresh()
 				else
 				{
 					// Upload the pending changes range to GPU
-					writeToBufferIfNeeded(pendingChanges.mFirst, pendingChanges.mLast, bitmap);
+					uploadChanges(pendingChanges);
 					pendingChanges = currentChanges;
 				}
 			}
@@ -168,9 +192,16 @@ void OpenGLRenderResources::refresh()
 		// Is there pending changes that need to be uploaded?
 		if (pendingChanges.valid())
 		{
-			writeToBufferIfNeeded(pendingChanges.mFirst, pendingChanges.mLast, bitmap);
+			uploadChanges(pendingChanges);
 		}
 		mPatternCacheTexture.unbindBuffer();
+
+	#if defined(PLATFORM_PS4)
+		if (collectedChanges.valid())
+		{
+			mPatternCacheTexture.updateRange(bitmap.getData(), collectedChanges.mFirst * 0x40, (collectedChanges.mLast - collectedChanges.mFirst + 1) * 0x40);
+		}
+	#endif
 	}
 
 	// Update plane pattern textures

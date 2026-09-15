@@ -53,6 +53,14 @@ EngineServerClient::~EngineServerClient()
 
 bool EngineServerClient::setupClient(bool useIPv6)
 {
+#if defined(PLATFORM_PS4)
+	// Online features (update check, ghost sync, netplay) are disabled on PS4 for now: the SDK's POSIX
+	// sockets are not verified on the console, and DNS needs sceNetResolver
+	RMX_LOG_INFO("Networking is disabled on this platform");
+	mConnectionState = ConnectionState::FAILED;
+	return false;
+#endif
+
 	mUseIPv6 = useIPv6;
 	Sockets::startupSockets();
 
@@ -145,6 +153,12 @@ void EngineServerClient::updateClient(float timeElapsed)
 
 void EngineServerClient::connectToServer()
 {
+#if defined(PLATFORM_PS4)
+	// See setupClient
+	mConnectionState = ConnectionState::FAILED;
+	return;
+#endif
+
 	if (mConnectionState == ConnectionState::NOT_CONNECTED || mConnectionState == ConnectionState::FAILED)
 	{
 		// Start connecting now

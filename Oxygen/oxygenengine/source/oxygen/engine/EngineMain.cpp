@@ -25,6 +25,8 @@
 #include "oxygen/rendering/RenderResources.h"
 #include "oxygen/simulation/Simulation.h"
 
+#include "rmxbase/tools/PS4Stage.h"
+
 
 #if defined(PLATFORM_WINDOWS) || defined(PLATFORM_LINUX)
 	#define LOAD_APP_ICON_PNG
@@ -49,6 +51,17 @@ void EngineMain::earlySetup()
 #endif
 
 	SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "0");
+
+#if defined(PLATFORM_PS4)
+	// SDL's dummy drivers are "demand only": without the orbis drivers (PS4_SDL_ORBIS_VIDEO / PS4_SDL_ORBIS_AUDIO
+	// build options) they have to be requested by name, or SDL video / audio initialization fails outright
+	#if !defined(SDL_VIDEO_DRIVER_ORBIS)
+		SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
+	#endif
+	#if !defined(SDL_AUDIO_DRIVER_ORBIS)
+		SDL_SetHint(SDL_HINT_AUDIODRIVER, "dummy");
+	#endif
+#endif
 
 	INIT_RMX;
 	INIT_RMXEXT_OGGVORBIS;
@@ -145,14 +158,37 @@ void EngineMain::switchToRenderMethod(Configuration::RenderMethod newRenderMetho
 {
 	Configuration& config = Configuration::instance();
 	const bool wasUsingOpenGL = (config.mRenderMethod == Configuration::RenderMethod::OPENGL_FULL || config.mRenderMethod == Configuration::RenderMethod::OPENGL_SOFT);
+#if defined(PLATFORM_PS4)
+	const Configuration::RenderMethod previousRenderMethod = config.mRenderMethod;
+#endif
 	config.mRenderMethod = newRenderMethod;
 
 	bool nowUsingOpenGL = (config.mRenderMethod == Configuration::RenderMethod::OPENGL_FULL || config.mRenderMethod == Configuration::RenderMethod::OPENGL_SOFT);
+#if defined(PLATFORM_PS4)
+	PS4_STAGE("render method switch %d -> %d (%s)", (int)previousRenderMethod, (int)newRenderMethod, (nowUsingOpenGL != wasUsingOpenGL) ? "window gets recreated" : "same window, renderer only");
+#endif
 	if (nowUsingOpenGL != wasUsingOpenGL)
 	{
 		// Need to recreate the window
 		destroyWindow();
+	#if defined(PLATFORM_PS4)
+		// Do not continue without a window: go back to the previous render method if the new one cannot get one
+		if (createWindow())
+		{
+			PS4_STAGE("video re-init done (render method %d)", (int)config.mRenderMethod);
+		}
+		else
+		{
+			PS4_STAGE("video re-init FAILED for render method %d (%s) - back to render method %d", (int)newRenderMethod, SDL_GetError(), (int)previousRenderMethod);
+			config.mRenderMethod = previousRenderMethod;
+			if (createWindow())
+				PS4_STAGE("video re-init done (render method %d, previous one restored)", (int)config.mRenderMethod);
+			else
+				PS4_STAGE("video re-init FAILED again for render method %d (%s)", (int)previousRenderMethod, SDL_GetError());
+		}
+	#else
 		createWindow();
+	#endif
 
 		// Check OpenGL in the config again, it could have changed - namely if OpenGL initialization failed
 		nowUsingOpenGL = (config.mRenderMethod == Configuration::RenderMethod::OPENGL_FULL || config.mRenderMethod == Configuration::RenderMethod::OPENGL_SOFT);
@@ -255,14 +291,23 @@ bool EngineMain::startupEngine()
 		RMX_LOG_INFO("App data path:       " << WString(config.mAppDataPath).toStdString());
 	}
 
+	PS4_STAGE("logging started, app data path '%s'", WString(config.mAppDataPath).toStdString().c_str());
+
 	// Load configuration and settings
 	if (!initConfigAndSettings())
+	{
+		PS4_STAGE("config load FAILED");
 		return false;
+	}
+	PS4_STAGE("config loaded (render method %d, window mode %d, %dx%d)", (int)config.mRenderMethod, (int)config.mWindowMode, config.mWindowSize.x, config.mWindowSize.y);
 
 	// Setup file system
 	RMX_LOG_INFO("File system setup");
 	if (!initFileSystem())
+	{
+		PS4_STAGE("file system / data packages FAILED");
 		return false;
+	}
 
 	// System
 	RMX_LOG_INFO("System initialization...");
@@ -277,11 +322,15 @@ bool EngineMain::startupEngine()
 	mSystems.mUpscalerCollection.loadUpscalers();
 
 	RMX_LOG_INFO("Video initialization...");
+	PS4_STAGE("video init...");
 	if (!createWindow())
 	{
+		PS4_STAGE("video init FAILED: %s", SDL_GetError());
 		RMX_ERROR("Unable to create window" << (config.mFailSafeMode ? " in fail-safe mode" : "") << " with error: " << SDL_GetError(), );
 		return false;
 	}
+
+	PS4_STAGE("video init done (render method %d, SDL video driver '%s')", (int)config.mRenderMethod, SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "(none)");
 
 	RMX_LOG_INFO("Startup of VideoOut...");
 	mSystems.mVideoOut.startup();
@@ -297,11 +346,12 @@ bool EngineMain::startupEngine()
 	RMX_LOG_INFO("Startup of AudioOut");
 	mAudioOut = &EngineMain::getDelegate().createAudioOut();
 	mAudioOut->startup();
+	PS4_STAGE("audio init done (%d Hz, SDL audio driver '%s')", config.mAudio.mSampleRate, SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "(none)");
 
 	// Networking
 	RMX_LOG_INFO("Networking initialization...");
 	const bool useIPv6 = false;
-	mSystems.mEngineServerClient.setupClient(useIPv6);
+	mSystems.mEngineServerClient.setupClient(useIPv6);	// Does nothing on PS4, where online features are disabled
 
 	// Command forwarder
 	mSystems.mCommandForwarder.startup();
@@ -311,6 +361,7 @@ bool EngineMain::startupEngine()
 
 	// Done
 	RMX_LOG_INFO("Engine startup successful");
+	PS4_STAGE("engine startup successful");
 	return true;
 }
 
@@ -322,7 +373,9 @@ void EngineMain::run()
 	RMX_LOG_INFO("Starting main application loop");
 
 	Application application;
+	PS4_STAGE("entering main loop");
 	FTX::System->run(application);
+	PS4_STAGE("main loop left");
 }
 
 void EngineMain::shutdown()
@@ -372,6 +425,10 @@ void EngineMain::initDirectories()
 	#elif defined(PLATFORM_VITA)
 		// Vita
 		config.mAppDataPath = L"ux0:data/sonic3air/savedata/";
+	#elif defined(PLATFORM_PS4)
+		// PS4: the package root /app0/ is read-only, /data/ is the writable area for homebrew
+		config.mAppDataPath = L"/data/sonic3air/savedata/";
+		FTX::FileSystem->createDirectory(config.mAppDataPath);
 	#elif !defined(PLATFORM_IOS)
 		// Choose app data path
 		{
@@ -494,10 +551,16 @@ bool EngineMain::initConfigAndSettings()
 	if (config.mRenderMethod > Configuration::getHighestSupportedRenderMethod())
 		config.mRenderMethod = Configuration::getHighestSupportedRenderMethod();
 
-#if defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS) || defined(PLATFORM_VITA)
+#if defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS) || defined(PLATFORM_VITA) || defined(PLATFORM_PS4)
 	// Use fullscreen, with no borders please
 	//  -> Note that this doesn't work for the web version, if running in mobile browsers - we rely on a window with fixed size (see config.json) there
 	config.mWindowMode = Configuration::WindowMode::FULLSCREEN_EXCLUSIVE;
+#endif
+
+#if defined(PLATFORM_PS4)
+	// The PS4 video out is always 1920x1080, and sceAudioOut only takes 48 kHz
+	config.mWindowSize.set(1920, 1080);
+	config.mAudio.mSampleRate = 48000;
 #endif
 
 	RMX_LOG_INFO(((config.mRenderMethod == Configuration::RenderMethod::SOFTWARE) ? "Using pure software renderer" :
@@ -575,11 +638,20 @@ bool EngineMain::initFileSystem()
 	// Add package providers
 	if (!loadFilePackages(false))
 		return false;
+#if defined(PLATFORM_PS4)
+	{
+		int numLoaded = 0;
+		for (PackedFileProvider* provider : mPackedFileProviders)
+			numLoaded += (nullptr != provider) ? 1 : 0;
+		PS4_STAGE("data packages loaded: %d of %d (game data path '%s')", numLoaded, (int)mPackedFileProviders.size(), WString(config.mGameDataPath).toStdString().c_str());
+	}
+#endif
 
 	// Sanity check if engine data exists
 	//  -> The Oxygen icon is a file that is always part of the engine data, so we just check for that
 	if (!FTX::FileSystem->exists(config.mEngineDataPath + L"/oxygen_icon.png"))
 	{
+		PS4_STAGE("engine data NOT found ('%s/oxygen_icon.png')", WString(config.mEngineDataPath).toStdString().c_str());
 		if (mDelegate.isDedicatedApplication())
 			RMX_ERROR("Could not find engine data.\nThis can mean your game installation is broken and needs to be downloaded and installed again.\n\nIn case you manually replaced your data folder with the source data files, please make sure to also copy over the files from 'oxygenengine/data' as well.", )
 		else
@@ -645,6 +717,18 @@ bool EngineMain::loadFilePackageByIndex(size_t index, bool forceReload)
 		const std::wstring saveDataBasePath = config.mAppDataPath + L"/data/";
 		provider = PackedFileProvider::createPackedFileProvider(saveDataBasePath + dataPackage.mFilename);
 	}
+#if defined(PLATFORM_PS4)
+	const char* ps4PackageSource = (nullptr != provider) ? "game data (/app0/data) or save data" : "not found";
+	if (nullptr == provider)
+	{
+		// PS4: optional packages (like "audioremaster.bin", which the pkg does not carry by default) can be uploaded by the user to /data/sonic3air/ via FTP
+		//  -> The package only gets its table of contents read here, entries are streamed from the file on demand
+		provider = PackedFileProvider::createPackedFileProvider(L"/data/sonic3air/" + dataPackage.mFilename);
+		if (nullptr != provider)
+			ps4PackageSource = "/data/sonic3air/";
+	}
+	PS4_STAGE("data package '%s': %s", WString(dataPackage.mFilename).toStdString().c_str(), ps4PackageSource);
+#endif
 
 	if (nullptr != provider)
 	{
@@ -663,6 +747,20 @@ bool EngineMain::createWindow()
 {
 	Configuration& config = Configuration::instance();
 	const EngineDelegateInterface::AppMetaData& appMetaData = mDelegate.getAppMetaData();
+
+#if defined(PLATFORM_PS4)
+	// Without the orbis SDL video driver (build option PS4_SDL_ORBIS_VIDEO=OFF) SDL runs its "dummy"
+	// driver, which cannot create a GL context at all - and SDL_CreateWindow with SDL_WINDOW_OPENGL fails
+	// outright there. Fall back to the software renderer so the rest of the engine still boots headless.
+	{
+		const char* videoDriver = SDL_GetCurrentVideoDriver();
+		if (nullptr != videoDriver && SDL_strcmp(videoDriver, "dummy") == 0 && config.mRenderMethod != Configuration::RenderMethod::SOFTWARE)
+		{
+			PS4_STAGE("SDL video driver is 'dummy' (no GL): using the software renderer instead of render method %d", (int)config.mRenderMethod);
+			config.mRenderMethod = Configuration::RenderMethod::SOFTWARE;
+		}
+	}
+#endif
 
 	const bool useOpenGL = (config.mRenderMethod == Configuration::RenderMethod::OPENGL_FULL) || (config.mRenderMethod == Configuration::RenderMethod::OPENGL_SOFT);
 
@@ -817,6 +915,9 @@ bool EngineMain::createWindow()
 		{
 			RMX_LOG_INFO("Creating OpenGL context...");
 			SDL_GLContext context = SDL_GL_CreateContext(mSDLWindow);
+		#if defined(PLATFORM_PS4)
+			mSDLGLContext = context;
+		#endif
 			if (nullptr != context)
 			{
 				RMX_LOG_INFO("Vsync setup...");
@@ -840,6 +941,14 @@ bool EngineMain::createWindow()
 			// Fallback to software drawer
 			RMX_LOG_INFO("OpenGL drawer setup failed, using software rendering");
 			config.mRenderMethod = Configuration::RenderMethod::SOFTWARE;
+		#if defined(PLATFORM_PS4)
+			// The software drawer's GLES2 renderer recreates the window - the unused GL context must not outlive it (see "destroyWindow")
+			if (nullptr != mSDLGLContext)
+			{
+				SDL_GL_DeleteContext(mSDLGLContext);
+				mSDLGLContext = nullptr;
+			}
+		#endif
 			mDrawer.createDrawer<SoftwareDrawer>();
 		}
 	}
@@ -898,6 +1007,20 @@ void EngineMain::destroyWindow()
 {
 	mSystems.mVideoOut.destroyRenderer();
 	mDrawer.destroyDrawer();
+#if defined(PLATFORM_PS4)
+	// PS4: the GL context has to go before the window, and before any new window gets created
+	//  -> The console has one scan-out, and sceVideoOut allows one open handle. Mesa (zink/kopper) opens it with the swapchain of
+	//     the window surface and closes it only when the last reference to that swapchain's back buffer is gone - and a context
+	//     that rendered to the surface holds one until the context is destroyed. Leaking the context here (as the other platforms
+	//     do) left the old swapchain alive on a render method switch, so the new window never presented anything.
+	//  -> SDL_GL_DeleteContext releases the context first if it is current; it needs the EGL library that SDL_DestroyWindow unloads.
+	if (nullptr != mSDLGLContext)
+	{
+		SDL_GL_DeleteContext(mSDLGLContext);
+		mSDLGLContext = nullptr;
+		PS4_STAGE("video: GL context deleted before window destruction");
+	}
+#endif
 	SDL_DestroyWindow(mSDLWindow);
 	mSDLWindow = nullptr;
 }

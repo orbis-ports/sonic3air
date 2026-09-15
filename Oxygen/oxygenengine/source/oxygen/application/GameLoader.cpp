@@ -24,6 +24,8 @@
 	#include "oxygen/platform/android/AndroidJavaInterface.h"
 #endif
 
+#include "rmxbase/tools/PS4Stage.h"
+
 
 GameLoader::UpdateResult GameLoader::updateLoading()
 {
@@ -133,6 +135,7 @@ GameLoader::UpdateResult GameLoader::updateLoading()
 		{
 			// Initialize mods
 			RMX_LOG_INFO("Mod manager initialization...");
+			PS4_STAGE("game loading: mods, sprites, resources, fonts, persistent data...");
 			ModManager::instance().startup();
 
 			// Update input after mods are loaded
@@ -158,6 +161,7 @@ GameLoader::UpdateResult GameLoader::updateLoading()
 			EngineMain::instance().getAudioOut().handleGameLoaded();
 
 			// Game loaded
+			PS4_STAGE("game loaded (sprites, resources, fonts, audio definitions)");
 			mState = State::READY;
 			return UpdateResult::SUCCESS;
 		}

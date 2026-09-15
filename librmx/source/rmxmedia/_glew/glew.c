@@ -30,6 +30,24 @@
 ** THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+/* PlayStation 4 (OpenOrbis + static Mesa over EGL): there is no GLX and no libGL. Every GL entry
+ * point GLEW loads is resolved with eglGetProcAddress(), which in Mesa returns the shared-glapi
+ * dispatch stub for any gl* name, desktop-only ones included. Forced here rather than left to the
+ * build, because glew.c does not include rmxmedia_externals.h and would otherwise take the GLX path.
+ * The GL 1.1 symbols that GLEW expects to link against directly are provided for this target by
+ * glew_orbis_gl11.c. */
+#if defined(__ORBIS__)
+#  ifndef GLEW_EGL
+#    define GLEW_EGL
+#  endif
+#  ifndef GLEW_STATIC
+#    define GLEW_STATIC
+#  endif
+#  ifndef GLEW_NO_GLU
+#    define GLEW_NO_GLU
+#  endif
+#endif
+
 #ifndef GLEW_INCLUDE
 #include <GL/glew.h>
 #else

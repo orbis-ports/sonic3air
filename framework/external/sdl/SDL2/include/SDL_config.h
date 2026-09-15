@@ -47,6 +47,9 @@
 #include "SDL_config_emscripten.h"
 #elif defined(__NGAGE__)
 #include "SDL_config_ngage.h"
+#elif defined(__ORBIS__)
+/* PlayStation 4 (OpenOrbis): Oxygen/sonic3air/build/_ps4/sdl/SDL_config_orbis.h, found via the include path */
+#include "SDL_config_orbis.h"
 #else
 /* This is a minimal configuration just to get SDL running on new platforms. */
 #include "SDL_config_minimal.h"
