@@ -86,7 +86,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update -y -o Acquire::Retries=3
           sudo apt-get install -y -o Acquire::Retries=3 --no-install-recommends \
-            clang ninja-build libgl-dev libegl-dev libcurl4-openssl-dev libegl-mesa0 libgl1-mesa-dri
+            clang ninja-build libgl-dev libegl-dev libx11-dev libxext-dev libcurl4-openssl-dev \
+            libegl-mesa0 libgl1-mesa-dri
           clang --version | head -1
           cmake --version | head -1
 
