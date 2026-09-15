@@ -288,6 +288,10 @@ namespace lemon
 					std::vector<rmx::FileIO::FileEntry> fileEntries;
 					fileEntries.reserve(8);
 					FTX::FileSystem->listFilesByMask(mScriptBasePath + localPath + *includeBasePath.toWString() + L"*.lemon", false, fileEntries);
+
+					// Include in a fixed order, independent of the file system's directory order (which e.g. differs between Linux file systems)
+					//  -> Otherwise the compiled scripts (like "scripts.bin") differ depending on where the sources got compiled
+					std::sort(fileEntries.begin(), fileEntries.end(), [](const rmx::FileIO::FileEntry& a, const rmx::FileIO::FileEntry& b) { return a.mFilename < b.mFilename; });
 					for (const rmx::FileIO::FileEntry& fileEntry : fileEntries)
 					{
 						if (!loadScriptInternal(localPath + *includeBasePath.toWString(), fileEntry.mFilename, outLines, includedPathHashes))

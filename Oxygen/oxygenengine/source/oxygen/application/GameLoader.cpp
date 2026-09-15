@@ -33,6 +33,14 @@ GameLoader::UpdateResult GameLoader::updateLoading()
 	{
 		case State::UNLOADED:
 		{
+			if (Configuration::instance().mCompileScriptsOnly)
+			{
+				// Only compiling scripts: they do not depend on the ROM, nor on the resources loaded from it
+				RMX_LOG_INFO("Script compilation only, skipping ROM and resource loading");
+				mState = State::READY;
+				return UpdateResult::SUCCESS;
+			}
+
 			RMX_LOG_INFO("Loading ROM...");
 			if (!ResourcesCache::instance().loadRom())
 			{

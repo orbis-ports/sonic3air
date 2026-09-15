@@ -305,7 +305,16 @@ LemonScriptProgram::LoadingResult LemonScriptProgram::loadAllScriptModules(lemon
 			if (!scriptsLoaded) \
 				globalsLookup = mInternal.mGlobalsLookupCoreOnly;
 
-		if (EngineMain::getDelegate().useDeveloperFeatures())
+		if (config.mCompileScriptsOnly)
+		{
+			// Script compilation only: always compile from the sources, never pick up an existing scripts.bin
+			//  -> On success, loadBaseScriptFromSource saves the result to mCompiledScriptSavePath, exactly like a normal compile
+			if (!config.mCompiledScriptSavePath.empty() && FTX::FileSystem->exists(config.mCompiledScriptSavePath))
+				FTX::FileSystem->removeFile(config.mCompiledScriptSavePath);
+			scriptsLoaded = loadBaseScriptFromSource(globalsLookup, Configuration::instance().mProjectPath + std::wstring(baseScriptFilename), coreModuleDependencyHash, loadOptions, loadingResult);
+			RESET_GLOBALS_LOOKUP_ON_FAILURE;
+		}
+		else if (EngineMain::getDelegate().useDeveloperFeatures())
 		{
 		#ifdef DEBUG
 			// Deserialize from cache (so that debug builds don't have to compile themselves, which is quite slow there)

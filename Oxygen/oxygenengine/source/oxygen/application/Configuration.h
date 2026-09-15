@@ -248,6 +248,7 @@ public:
 	std::wstring mCompiledScriptSavePath;
 	bool mEnableROMDataAnalyser = false;
 	bool mExitAfterScriptLoading = false;
+	bool mCompileScriptsOnly = false;		// Host tool mode (e.g. "-compilescripts"): no ROM needed, scripts always compiled from source and saved to mCompiledScriptSavePath
 	int mRunScriptNativization = 0;			// 0: Disabled, 1: Run nativization, 2: Nativization done
 	std::wstring mScriptNativizationOutput;
 	std::wstring mDumpCppDefinitionsOutput;

@@ -231,9 +231,23 @@ int main(int argc, char** argv)
 			config.mDumpCppDefinitionsOutput = L"scripts/_reference/cpp_core_functions.lemon";
 			config.mExitAfterScriptLoading = true;
 		}
+		if (arguments.mCompileScripts)
+		{
+			// Compile the scripts to "saves/scripts.bin" (to be shipped as "data/scripts.bin") without needing a ROM
+			config.mCompileScriptsOnly = true;
+			config.mExitAfterScriptLoading = true;
+		}
 
 		// Now run the game
 		myMain.execute();
+
+		if (arguments.mCompileScripts)
+		{
+			// Exit code for build scripts: the output only exists if compilation succeeded (it gets removed before compiling)
+			const bool success = !config.mCompiledScriptSavePath.empty() && FTX::FileSystem->exists(config.mCompiledScriptSavePath);
+			RMX_LOG_INFO("Script compilation " << (success ? "succeeded" : "FAILED"));
+			return success ? 0 : 1;
+		}
 	}
 	catch (const std::exception& e)
 	{

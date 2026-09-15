@@ -17,6 +17,7 @@ public:
 	bool mPack = false;
 	bool mNativize = false;
 	bool mDumpCppDefinitions = false;
+	bool mCompileScripts = false;		// Compile scripts to "saves/scripts.bin" without a ROM, then exit
 
 public:
 	GameArgumentsReader() : ArgumentsReader("sonic3air://") {}
@@ -37,6 +38,11 @@ protected:
 		else if (parameter == "-dumpcppdefinitions")
 		{
 			mDumpCppDefinitions = true;
+			return true;
+		}
+		else if (parameter == "-compilescripts")
+		{
+			mCompileScripts = true;
 			return true;
 		}
 		return false;
