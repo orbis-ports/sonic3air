@@ -1,0 +1,295 @@
+# Sonic 3 A.I.R. for the PlayStation 4: the release data, then the fake-signed .pkg a console can install.
+#
+# ⚠ THIS WORKFLOW IS FOR THE FORK AND MUST NOT FIRE UPSTREAM. The branch is ps4-support, the tag
+# prefix is sonic3air-ps4-v, and every job additionally refuses to run outside orbis-ports/sonic3air.
+#
+# ⚠ THE ROM IS NEVER PART OF THIS PIPELINE - not downloaded, not cached, not packaged (copyright).
+# The data the pkg ships is made WITHOUT it:
+#   host-data  builds the Linux host tool (clang) and runs Oxygen/sonic3air/build/_ps4/make-host-data.sh:
+#              `sonic3air_linux -pack` (enginedata/gamedata/audiodata.bin + metadata.json) and
+#              `sonic3air_linux -compilescripts` (scripts.bin; a host-only mode that skips the ROM and
+#              compiles the script sources - byte-identical to a scripts.bin a normal run with the ROM writes).
+#   pkg        cross-builds the eboot with the OpenOrbis SDK, orbis-compat and the mesa-ps4 bundle, and
+#              packages it with that data. check-pkg-no-rom.sh runs inside the pkg step (before make-pkg.sh
+#              on everything that goes in, and after it on the staged package) and fails the build on
+#              anything ROM-like.
+#   release    on sonic3air-ps4-v* tags only: a GitHub Release with the pkg and RELEASE-NOTES.md.
+
+name: CI PS4
+
+on:
+  push:
+    branches:
+      - ps4-support
+    tags:
+      - 'sonic3air-ps4-v*'
+  pull_request:
+    branches:
+      - ps4-support
+  workflow_dispatch:
+    inputs:
+      orbis-compat-ref:
+        description: orbis-compat commit to build against (a sha, never a branch).
+        required: false
+        default: ab4c066eeeb23dd3062f332dc7c39cab71e42fea
+      mesa-release:
+        description: mesa-ps4 release tag whose orbis-mesa-<sha>.tar.gz to consume.
+        required: false
+        default: orbis-mesa-a4fa6b57f8bd
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ps4-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  # ⚠ PINNED BY SHA / RELEASE, NOT BY BRANCH - the cache keys in the composite action are these values
+  # verbatim. They are the pins of the build tested on the console (2026-09-15):
+  #   orbis-compat ab4c066e  = the checkout the console pkg was linked against
+  #   orbis-mesa-a4fa6b57f8bd = mesa-ps4 with the shader disk cache + zlib (the console build's archives
+  #                            carry the same global symbols; orbis-mesa-16b12ca41c32 predates both)
+  ORBIS_COMPAT_REF: ${{ github.event.inputs.orbis-compat-ref || 'ab4c066eeeb23dd3062f332dc7c39cab71e42fea' }}
+  MESA_RELEASE: ${{ github.event.inputs.mesa-release || 'orbis-mesa-a4fa6b57f8bd' }}
+  OPENORBIS_SDK_TAG: v0.5.4
+
+jobs:
+  host-data:
+    if: github.repository == 'orbis-ports/sonic3air'
+    runs-on: ubuntu-24.04
+    outputs:
+      sha8: ${{ steps.slug.outputs.sha8 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get short SHA
+        id: slug
+        run: echo "sha8=$(echo "${GITHUB_SHA}" | cut -c1-8)" >> "$GITHUB_OUTPUT"
+
+      # The data is a pure function of the data/script sources and the tool that packs/compiles them, so
+      # it is cached on exactly those. A hit skips the host build entirely.
+      - name: Restore release data
+        id: data-cache
+        uses: actions/cache@v4
+        with:
+          path: host-data
+          key: sonic3air-host-data-v1-${{ hashFiles('Oxygen/sonic3air/data/**', 'Oxygen/oxygenengine/data/**', 'Oxygen/sonic3air/scripts/**', 'Oxygen/sonic3air/oxygenproject.json', 'Oxygen/sonic3air/_master_image_template/config.json', 'Oxygen/lemonscript/source/**', 'Oxygen/oxygenengine/source/**', 'Oxygen/sonic3air/source/**', 'librmx/source/**', 'framework/external/zlib/**', 'Oxygen/sonic3air/build/_cmake/**', 'Oxygen/sonic3air/build/_ps4/make-host-data.sh') }}
+
+      # clang, not GCC: GCC -O3 builds a lemonscript compiler that crashes on the game's scripts (measured
+      # with GCC 16). GL/EGL + Mesa's software drivers so SDL's offscreen video driver can open a window;
+      # without GL the engine falls back to its software renderer, which is fine for compiling scripts too.
+      - name: Host build dependencies
+        if: steps.data-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y -o Acquire::Retries=3
+          sudo apt-get install -y -o Acquire::Retries=3 --no-install-recommends \
+            clang ninja-build libgl-dev libegl-dev libcurl4-openssl-dev libegl-mesa0 libgl1-mesa-dri
+          clang --version | head -1
+          cmake --version | head -1
+
+      - name: Pack data + compile scripts (no ROM)
+        if: steps.data-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          Oxygen/sonic3air/build/_ps4/make-host-data.sh \
+            --out host-data --work "${RUNNER_TEMP}/host-data-work" --jobs "$(nproc)"
+          # make-host-data.sh writes nothing into the checkout (zlib's configure-time zconf.h rename is undone)
+          git status --porcelain --untracked-files=no | tee "${RUNNER_TEMP}/dirty.txt"
+          [ ! -s "${RUNNER_TEMP}/dirty.txt" ] || { echo "!! the host data step modified tracked files" >&2; exit 1; }
+
+      - name: Assert the data
+        run: |
+          set -euo pipefail
+          for f in enginedata.bin gamedata.bin audiodata.bin metadata.json scripts.bin; do
+            [ -s "host-data/$f" ] || { echo "!! host-data/$f is missing or empty" >&2; exit 1; }
+          done
+          Oxygen/sonic3air/build/_ps4/check-pkg-no-rom.sh --dir host-data
+          {
+            echo "### Release data (no ROM)"
+            echo
+            echo '| file | bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in enginedata.bin gamedata.bin audiodata.bin metadata.json scripts.bin; do
+              echo "| $f | $(stat -c%s "host-data/$f") | \`$(sha256sum "host-data/$f" | cut -c1-16)…\` |"
+            done
+            echo
+            echo "cache hit: ${{ steps.data-cache.outputs.cache-hit == 'true' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonic3air-ps4-data-${{ steps.slug.outputs.sha8 }}
+          path: host-data/
+          if-no-files-found: error
+          retention-days: 30
+
+  pkg:
+    if: github.repository == 'orbis-ports/sonic3air'
+    needs: host-data
+    runs-on: ubuntu-24.04
+    outputs:
+      pkg: ${{ steps.rename.outputs.pkg }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Orbis toolchain
+        uses: ./.github/actions/orbis-toolchain
+        with:
+          sdk-tag: ${{ env.OPENORBIS_SDK_TAG }}
+          orbis-compat-ref: ${{ env.ORBIS_COMPAT_REF }}
+          mesa-release: ${{ env.MESA_RELEASE }}
+
+      # ninja because build.sh prefers it; ImageMagick for sce_sys/icon0.png (without it the pkg gets the
+      # generated placeholder icon instead of the game's own).
+      - name: Build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y -o Acquire::Retries=3
+          sudo apt-get install -y -o Acquire::Retries=3 --no-install-recommends ninja-build imagemagick
+          cmake --version | head -1
+
+      # ⚠ PkgTool.Core NEEDS OpenSSL 1.1 AND THE RUNNER HAS OPENSSL 3. It is an old self-contained .NET
+      # build whose crypto shim dlopen()s libssl.so.1.1 by soname. make-pkg.sh reads PS4_PKGTOOL_OPENSSL_LIB
+      # first and only then probes /nix/store, which does not exist on a runner. (Same step as RetroArch.)
+      - name: OpenSSL 1.1 for PkgTool.Core
+        run: |
+          set -euo pipefail
+          lib="${RUNNER_TEMP}/openssl11/lib"
+          if [ ! -e "$lib/libssl.so.1.1" ]; then
+            tmp="$(mktemp -d)"
+            base=http://security.ubuntu.com/ubuntu/pool/main/o/openssl
+            deb="$(curl -sSfL "$base/" \
+                   | grep -oE 'libssl1\.1_[^"]*_amd64\.deb' | sort -V | tail -1)"
+            [ -n "$deb" ] || { echo "!! no libssl1.1 .deb in $base" >&2; exit 1; }
+            echo "== $deb"
+            curl -sSfL -o "$tmp/libssl.deb" "$base/$deb"
+            dpkg-deb -x "$tmp/libssl.deb" "$tmp/x"
+            mkdir -p "$lib"
+            cp -a "$tmp"/x/usr/lib/x86_64-linux-gnu/lib{ssl,crypto}.so.1.1 "$lib"/
+          fi
+          echo "PS4_PKGTOOL_OPENSSL_LIB=$lib" >> "$GITHUB_ENV"
+          ls -l "$lib"
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: sonic3air-ps4-data-${{ needs.host-data.outputs.sha8 }}
+          path: ps4-data
+
+      # --sdl-orbis-all: SDL's orbis video (EGL/zink), audio and pad drivers - the configuration that runs on
+      # the console. Without it SDL uses dummy drivers and the game has no picture, sound or input.
+      - name: Compile + package
+        run: |
+          set -euo pipefail
+          Oxygen/sonic3air/build/_ps4/build.sh --sdl-orbis-all --data ps4-data \
+            --work "${RUNNER_TEMP}/sonic3air-ps4" --jobs "$(nproc)"
+          echo "PS4_OUT=${RUNNER_TEMP}/sonic3air-ps4/build/sonic3air" >> "$GITHUB_ENV"
+          echo "PS4_BUILD=${RUNNER_TEMP}/sonic3air-ps4/build" >> "$GITHUB_ENV"
+
+      # ⚠ ASSERT ON ARTEFACTS, NOT ON THE EXIT STATUS: create-fself and make-pkg.sh have both been seen to
+      # exit 0 while producing nothing.
+      - name: Assert the package
+        run: |
+          set -euo pipefail
+          cd "${PS4_OUT}"
+          shopt -s nullglob
+          built=(IV0000-*.pkg)
+          [ "${#built[@]}" -eq 1 ] || {
+            echo "!! expected exactly one IV0000-*.pkg, found ${#built[@]}: ${built[*]:-none}" >&2
+            exit 1; }
+          pkg="${built[0]}"
+          for f in Sonic3AIR.elf eboot.bin "$pkg"; do
+            [ -s "$f" ] || { echo "!! build reported success but $f is missing" >&2; exit 1; }
+          done
+          sz="$(stat -c%s "$pkg")"
+          # eboot alone is ~50 MB, the data ~7 MB
+          [ "$sz" -gt 40000000 ] || { echo "!! $pkg is only $sz bytes - that is not a Sonic 3 A.I.R. build" >&2; exit 1; }
+          for f in data/enginedata.bin data/gamedata.bin data/audiodata.bin data/metadata.json data/scripts.bin \
+                   config.json eboot.bin sce_sys/param.sfo sce_sys/icon0.png; do
+            [ -s "pkg-stage/$f" ] || { echo "!! pkg-stage/$f is missing" >&2; exit 1; }
+          done
+          # The ROM guard already ran inside the pkg step; run it once more on the staged package, visibly.
+          "${GITHUB_WORKSPACE}/Oxygen/sonic3air/build/_ps4/check-pkg-no-rom.sh" --dir pkg-stage
+          {
+            echo "### Package"
+            echo
+            echo "\`$pkg\` - $sz bytes, sha256 \`$(sha256sum "$pkg" | cut -d' ' -f1)\`"
+            echo
+            echo "orbis-compat \`${ORBIS_COMPAT_REF}\`, Mesa \`${MESA_RELEASE}\`, OpenOrbis SDK \`${OPENORBIS_SDK_TAG}\`"
+            echo
+            echo "#### /app0 file table (staged package)"
+            echo
+            echo '| path | bytes |'
+            echo '|---|---:|'
+            (cd pkg-stage && find . -type f ! -name pkg.gp4 ! -name pkg-build.log -printf '%P\t%s\n' | LC_ALL=C sort \
+              | awk -F'\t' '{printf "| %s | %s |\n", $1, $2}')
+            echo
+            echo "#### Extra files manifest (pkg-assets/extra-files.txt)"
+            echo
+            echo '```'
+            sed "s|${GITHUB_WORKSPACE}/||; s|${RUNNER_TEMP}/||" "${PS4_BUILD}/pkg-assets/extra-files.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Name the package after the ref
+        id: rename
+        run: |
+          set -euo pipefail
+          # ⚠ FIND THE PACKAGE, DO NOT SPELL IT: the title id and content label live in the CMakeLists.
+          shopt -s nullglob
+          built=("${PS4_OUT}"/IV0000-*.pkg)
+          [ "${#built[@]}" -eq 1 ] || { echo "!! expected exactly one IV0000-*.pkg" >&2; exit 1; }
+          # GITHUB_REF_NAME can contain a slash (a branch like foo/bar, or 12/merge); the filename cannot.
+          ref="${GITHUB_REF_NAME//\//-}"
+          # Tags are sonic3air-ps4-v1.0.0; drop the prefix the tag and the filename already agree on.
+          ref="${ref#sonic3air-ps4-}"
+          mkdir -p out
+          out="Sonic3AIR-PS4-${ref}.pkg"
+          cp -f "${built[0]}" "out/$out"
+          (cd out && sha256sum "$out" > "$out.sha256")
+          cp -f "${PS4_BUILD}/pkg-assets/extra-files.txt" out/extra-files.txt
+          echo "pkg=$out" >> "$GITHUB_OUTPUT"
+          echo "== ${built[0]} -> out/$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonic3air-ps4-pkg-${{ needs.host-data.outputs.sha8 }}
+          path: out/
+          if-no-files-found: error
+          # The pkg is already compressed; do not spend time zipping it again
+          compression-level: 0
+
+  release:
+    if: github.repository == 'orbis-ports/sonic3air' && startsWith(github.ref, 'refs/tags/sonic3air-ps4-v')
+    needs: [host-data, pkg]
+    runs-on: ubuntu-24.04
+    # Wider than the workflow default, and only here: this job publishes a Release.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: Oxygen/sonic3air/build/_ps4/RELEASE-NOTES.md
+          sparse-checkout-cone-mode: false
+
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: sonic3air-ps4-pkg-${{ needs.host-data.outputs.sha8 }}
+          path: out
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/${{ needs.pkg.outputs.pkg }}
+            out/${{ needs.pkg.outputs.pkg }}.sha256
+          fail_on_unmatched_files: true
+          # The notes are a file in the repository so they are reviewed in the same diff as the change they
+          # describe - and so the one thing a fresh install needs (the user's own ROM) cannot be forgotten.
+          body_path: Oxygen/sonic3air/build/_ps4/RELEASE-NOTES.md
