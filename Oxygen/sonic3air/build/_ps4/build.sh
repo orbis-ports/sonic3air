@@ -58,13 +58,29 @@ fi
 
 # ⚠ The lines that cannot be shared - see orbis-compat/scripts/ps4/orbis-env.sh. Sibling directory of
 # this repository first, then the personal default.
+# ⚠ TWO REPOSITORIES SINCE 2026-09-18. orbis-compat is include/ and the archive; the porting kit is
+# the toolchain file, the loader shim and scripts/ps4/. The overlay is found by a HEADER it owns -
+# probing for scripts/ps4/orbis-env.sh would find the KIT and call it the overlay, which is a wrong
+# build rather than an error.
 for _c in "${ORBIS_COMPAT_DIR:-}" "${ROOT}/../orbis-compat" "${HOME}/src-ps4/orbis-compat"; do
-  [[ -n "$_c" && -f "$_c/scripts/ps4/orbis-env.sh" ]] && { ORBIS_COMPAT_DIR="$_c"; break; }
+  [[ -n "$_c" && -f "$_c/include/orbis_prefix.h" ]] && { ORBIS_COMPAT_DIR="$_c"; break; }
 done
 [[ -n "${ORBIS_COMPAT_DIR:-}" ]] || {
   echo "!! orbis-compat not found - clone it next to this repository, or set ORBIS_COMPAT_DIR" >&2
   exit 1
 }
+export ORBIS_COMPAT_DIR
+
+# The kit. Its last candidate is the overlay, which carried these scripts until that date, so a pin
+# older than the move still works - and that is the arm this repository uses until its pin moves.
+for _k in "${ORBIS_KIT_DIR:-}" "${ROOT}/../orbis-porting-kit" "${HOME}/src-ps4/orbis-porting-kit" "${ORBIS_COMPAT_DIR}"; do
+  [[ -n "$_k" && -f "$_k/scripts/ps4/orbis-env.sh" ]] && { ORBIS_KIT_DIR="$_k"; break; }
+done
+[[ -n "${ORBIS_KIT_DIR:-}" ]] || {
+  echo "!! orbis-porting-kit not found - clone it next to this repository, or set ORBIS_KIT_DIR" >&2
+  exit 1
+}
+export ORBIS_KIT_DIR
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -87,7 +103,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 export ORBIS_COMPAT_DIR
-. "${ORBIS_COMPAT_DIR}/scripts/ps4/orbis-env.sh"
+. "${ORBIS_KIT_DIR}/scripts/ps4/orbis-env.sh"
 
 if [[ -n "${MESA_BUNDLE_SRC}" ]]; then
   [[ -f "${MESA_BUNDLE_SRC}/include/EGL/egl.h" ]] || orbis_die "Mesa bundle ${MESA_BUNDLE_SRC} has no include/EGL/egl.h"
