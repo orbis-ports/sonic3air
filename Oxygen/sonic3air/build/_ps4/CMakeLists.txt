@@ -270,9 +270,25 @@ set(PS4_ORBIS_SOURCES
 # exactly those objects now (build/libc16/) and the toolchain file puts them on every executable's
 # link line, so this game does not arrange it any more - and neither does the next port.
 
-find_file(ORBIS_CHECK_WCHAR check-wchar-link.sh
-	PATHS "$ENV{ORBIS_KIT_DIR}/scripts/ps4" "${ORBIS_KIT_DIR}/scripts/ps4" "${ORBIS_COMPAT_DIR}/scripts/ps4"
-	NO_DEFAULT_PATH REQUIRED)
+# ⚠ NOT find_file(), AND THE REASON IS THE TOOLCHAIN FILE. ps4-openorbis.cmake sets
+# CMAKE_FIND_ROOT_PATH to the SDK with CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY, and find_file obeys
+# the INCLUDE mode - so it searched inside the sysroot only and could not see a script that lives
+# beside the build. It failed on a runner while passing locally, because the local check had no
+# toolchain file in it, which is a reproduction of the wrong thing.
+set(ORBIS_CHECK_WCHAR "")
+foreach(_cand "$ENV{ORBIS_KIT_DIR}/scripts/ps4" "${ORBIS_KIT_DIR}/scripts/ps4"
+              "$ENV{ORBIS_COMPAT_DIR}/scripts/ps4" "${ORBIS_COMPAT_DIR}/scripts/ps4")
+	if(_cand AND EXISTS "${_cand}/check-wchar-link.sh")
+		set(ORBIS_CHECK_WCHAR "${_cand}/check-wchar-link.sh")
+		break()
+	endif()
+endforeach()
+if(NOT ORBIS_CHECK_WCHAR)
+	message(FATAL_ERROR
+		"check-wchar-link.sh not found. Looked in ORBIS_KIT_DIR='$ENV{ORBIS_KIT_DIR}' and "
+		"ORBIS_COMPAT_DIR='$ENV{ORBIS_COMPAT_DIR}', under scripts/ps4/.")
+endif()
+message(STATUS "PS4: wchar link guard ${ORBIS_CHECK_WCHAR}")
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/sonic3air")
 add_executable(Sonic3AIR ${PS4_ORBIS_SOURCES} ${SONIC3AIR_SOURCES})
