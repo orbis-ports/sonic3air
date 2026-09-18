@@ -139,7 +139,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Orbis toolchain
-        uses: ./.github/actions/orbis-toolchain
+        # ⚠ THE PUBLISHED ACTION. This file is where the copy STARTED: RetroArch took it from here
+        # and OpenGothic took it from RetroArch, and by 2026-09-18 the three had drifted. This one
+        # and OpenGothic's were still identical; RetroArch's was the one that had fallen behind, on
+        # its cache key (the overlay commit without the SDK tag) and on a shorter SDK sanity list.
+        # So this repin changes NOTHING about how this build resolves its toolchain - it just stops
+        # being a fourth place where that answer lives.
+        #
+        # v1 moves with v1.x; pin v1.0.0 to freeze it.
+        uses: orbis-ports/orbis-porting-kit/.github/actions/setup-orbis@v1
         with:
           sdk-tag: ${{ env.OPENORBIS_SDK_TAG }}
           orbis-compat-ref: ${{ env.ORBIS_COMPAT_REF }}
