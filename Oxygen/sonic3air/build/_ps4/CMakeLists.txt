@@ -252,42 +252,30 @@ target_compile_definitions(ps4-netlog PRIVATE NETLOG_TAG="sonic3air")
 # ---------------------------------------------------------------- Sonic3AIR
 
 file(GLOB_RECURSE SONIC3AIR_SOURCES ${WORKSPACE_DIR}/Oxygen/sonic3air/source/sonic3air/*.cpp)
+# ⚠ FIVE FILES LEFT THIS LIST ON 2026-09-18 and are now in orbis-compat, which every executable
+# links with --whole-archive: orbis_cxa_guard.c, orbis_thread_atexit.c, orbis_abort_report.c,
+# orbis_wchar32.c and orbis_cv_fix.cpp. Keeping them here as well would be a duplicate definition,
+# not a belt-and-braces. Nothing about a 16-bit wchar_t or libc++abi's guards was this game's.
+#
+# The two that stay are the two that cannot move: orbis_preinit.c has to be the FIRST object of the
+# game on the link line, which an archive cannot arrange, and orbis_crash_handlers.cpp is four lines
+# of glue over orbis::installCrashHandlers(), which lives in the overlay already.
 set(PS4_ORBIS_SOURCES
 	${PS4_DIR}/orbis/orbis_preinit.c		# FIRST: its constructor is the first of the game's (.init_array is in link order)
-	${PS4_DIR}/orbis/orbis_cxa_guard.c
-	${PS4_DIR}/orbis/orbis_thread_atexit.c
-	${PS4_DIR}/orbis/orbis_abort_report.c
-	${PS4_DIR}/orbis/orbis_wchar32.c
-	${PS4_DIR}/orbis/orbis_cv_fix.cpp
 	${PS4_DIR}/orbis/orbis_crash_handlers.cpp)
 
-# ⚠ 16-bit wchar_t in the SDK's libc.a - see orbis/orbis_wchar32.c, which replaces the wide-character
-# members with 32-bit ones. Three libc.a members that stay (regcomp and regexec - Mesa's driconf -
-# and vfscanf) call mbtowc/mbrtowc with a pointer to a 2-byte wchar_t on their stack; the 32-bit
-# versions would write 4 bytes there (regcomp keeps a saved register right behind it). They are
-# linked as copies whose call is renamed to the SDK's ORIGINAL 16-bit mbtowc/mbrtowc, which are
-# linked under that new name. Objects, not an archive: an object always wins over libc.a.
-set(PS4_SDK_LIBC "${OO_PS4_TOOLCHAIN}/lib/libc.a")
-set(PS4_LIBC16_DIR "${CMAKE_BINARY_DIR}/libc16")
-set(PS4_LIBC16_OBJECTS
-	${PS4_LIBC16_DIR}/libc16_regcomp.o ${PS4_LIBC16_DIR}/libc16_regexec.o ${PS4_LIBC16_DIR}/libc16_vfscanf.o
-	${PS4_LIBC16_DIR}/libc16_mbtowc.o ${PS4_LIBC16_DIR}/libc16_mbrtowc.o)
-add_custom_command(
-	OUTPUT ${PS4_LIBC16_OBJECTS}
-	COMMAND ${CMAKE_COMMAND} -E make_directory "${PS4_LIBC16_DIR}"
-	COMMAND "${CMAKE_AR}" x "--output=${PS4_LIBC16_DIR}" "${PS4_SDK_LIBC}" regcomp.lo regexec.lo vfscanf.lo mbtowc.lo mbrtowc.lo
-	COMMAND "${CMAKE_OBJCOPY}" --redefine-sym mbtowc=__orbis_libc16_mbtowc   "${PS4_LIBC16_DIR}/regcomp.lo" "${PS4_LIBC16_DIR}/libc16_regcomp.o"
-	COMMAND "${CMAKE_OBJCOPY}" --redefine-sym mbtowc=__orbis_libc16_mbtowc   "${PS4_LIBC16_DIR}/regexec.lo" "${PS4_LIBC16_DIR}/libc16_regexec.o"
-	COMMAND "${CMAKE_OBJCOPY}" --redefine-sym mbrtowc=__orbis_libc16_mbrtowc "${PS4_LIBC16_DIR}/vfscanf.lo" "${PS4_LIBC16_DIR}/libc16_vfscanf.o"
-	COMMAND "${CMAKE_OBJCOPY}" --redefine-sym mbtowc=__orbis_libc16_mbtowc   "${PS4_LIBC16_DIR}/mbtowc.lo"  "${PS4_LIBC16_DIR}/libc16_mbtowc.o"
-	COMMAND "${CMAKE_OBJCOPY}" --redefine-sym mbrtowc=__orbis_libc16_mbrtowc "${PS4_LIBC16_DIR}/mbrtowc.lo" "${PS4_LIBC16_DIR}/libc16_mbrtowc.o"
-	DEPENDS "${PS4_SDK_LIBC}"
-	COMMENT "libc16: renamed copies of libc.a regcomp/regexec/vfscanf + the 16-bit mbtowc/mbrtowc they call"
-	VERBATIM)
-set_source_files_properties(${PS4_LIBC16_OBJECTS} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+# ⚠ THE libc16 MACHINERY LEFT WITH orbis_wchar32.c. It extracted regcomp/regexec/vfscanf from the
+# SDK's libc.a and renamed their mbtowc/mbrtowc calls, because those members keep a 16-bit wchar_t
+# on their stack and the 32-bit replacements would write four bytes into it. orbis-compat builds
+# exactly those objects now (build/libc16/) and the toolchain file puts them on every executable's
+# link line, so this game does not arrange it any more - and neither does the next port.
+
+find_file(ORBIS_CHECK_WCHAR check-wchar-link.sh
+	PATHS "$ENV{ORBIS_KIT_DIR}/scripts/ps4" "${ORBIS_KIT_DIR}/scripts/ps4" "${ORBIS_COMPAT_DIR}/scripts/ps4"
+	NO_DEFAULT_PATH REQUIRED)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/sonic3air")
-add_executable(Sonic3AIR ${PS4_ORBIS_SOURCES} ${SONIC3AIR_SOURCES} ${PS4_LIBC16_OBJECTS})
+add_executable(Sonic3AIR ${PS4_ORBIS_SOURCES} ${SONIC3AIR_SOURCES})
 set_target_properties(Sonic3AIR PROPERTIES SUFFIX ".elf")
 target_precompile_headers(Sonic3AIR PRIVATE ${WORKSPACE_DIR}/Oxygen/sonic3air/source/sonic3air/pch.h)
 # The C runtime corrections must not pick up the C++ PCH.
@@ -327,7 +315,9 @@ add_custom_command(TARGET Sonic3AIR POST_BUILD
 	VERBATIM)
 # Before the eboot exists: a 16-bit wchar_t libc member in the ELF must not become a package.
 add_custom_command(TARGET Sonic3AIR POST_BUILD
-	COMMAND /bin/sh "${PS4_DIR}/check-wchar-link.sh" "${PS4_WHY_EXTRACT}"
+	# The guard moved to the porting kit with the file it guards; ORBIS_KIT_DIR is exported by
+	# setup-orbis and by orbis-env.sh, and the overlay is the fallback for a pin older than the move.
+	COMMAND /bin/sh "${ORBIS_CHECK_WCHAR}" "${PS4_WHY_EXTRACT}"
 	VERBATIM
 	COMMENT "checking that no 16-bit wchar_t libc.a member was linked")
 ps4_create_eboot(Sonic3AIR)
